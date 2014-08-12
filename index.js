@@ -7,6 +7,7 @@ var framer = require('./lib/frame');
 var hash =require('./lib/hash');
 var verify = require('./lib/verify');
 var pickCipher = require('./lib/pick_cipher');
+var toBuffer = require('./lib/to_buffer');
 
 var defaultCiphers = ['RC4'];
 
@@ -20,11 +21,13 @@ module.exports = function (keys, opts) {
     dh.group = group;
     
     return function (cb) {
-        return securePeer(dh, keys, ciphers, cb);
+        var sec = securePeer(dh, keys, ciphers);
+        if (typeof cb === 'function') sec.on('connection', cb);
+        return sec;
     };
 };
 
-function securePeer (dh, keys, ciphers, cb) {
+function securePeer (dh, keys, ciphers) {
     var stream, secret, token;
     var frame = framer();
     var cipher;
@@ -48,8 +51,9 @@ function securePeer (dh, keys, ciphers, cb) {
         var msg = Buffer(uf[0], 'base64');
         
         var decrypt = crypto.createDecipher(cipher, secret);
-        var s = decrypt.update(String(msg)) + decrypt.final();
-        stream.emit('data', Buffer(s));
+        var body = toBuffer(decrypt.update(msg));
+        var fin = toBuffer(decrypt.final());
+        stream.emit('data', Buffer.concat([body, fin]));
     }
     
     var lines = [];
@@ -101,8 +105,10 @@ function securePeer (dh, keys, ciphers, cb) {
         
         function write (buf) {
             var encrypt = crypto.createCipher(cipher, secret);
-            var s = encrypt.update(String(buf)) + encrypt.final();
-            sec.emit('data', frame.pack(keys.private, token, Buffer(s)));
+            var body = toBuffer(encrypt.update(buf));
+            var fin = toBuffer(encrypt.final());
+            var s = Buffer.concat([body, fin]);
+            sec.emit('data', frame.pack(keys.private, token, s));
         }
         
         sec.emit('connection', stream);
@@ -176,6 +182,5 @@ function securePeer (dh, keys, ciphers, cb) {
         }) + '\n');
     }
     
-    if (typeof cb === 'function') sec.on('connection', cb);
     return sec;
 };
